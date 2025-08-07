@@ -27,7 +27,7 @@ jobs:
         with:
           filters: |
             test-sources:
-              - 'src/**/*' 
+              - 'src/**/*'
               - '.github/workflows/run-tests-on-gh.yml'
               - 'pom.xml'
               - 'commit-report.sh'
@@ -41,8 +41,23 @@ jobs:
       SIMULATION_PRESET: standard
 
     steps:
-      - name: Checkout repository
+      - name: Checkout main branch code
         uses: actions/checkout@v4
+
+      - name: Checkout report branch for trend data
+        uses: actions/checkout@v4
+        with:
+          ref: report
+          path: ./report-data
+
+      - name: Prepare trend data file
+        run: |
+          TREND_FILE_SOURCE=./report-data/performance-trends/requests-trend.csv
+          TREND_FILE_DEST=./performance-trends/requests-trend.csv
+          mkdir -p ./performance-trends
+          if [ -f "$TREND_FILE_SOURCE" ]; then
+            cp "$TREND_FILE_SOURCE" "$TREND_FILE_DEST"
+          fi
 
       - name: Update the load configuration for PRS
         if: github.event_name == 'pull_request'
@@ -71,19 +86,10 @@ jobs:
 
       - name: Get System Information
         run: |
-          # Get RAM information
           total_ram=$(free -h | grep Mem | awk '{print $2}')
-          
-          # Get number of CPUs
           num_cpus=$(nproc)
-          
-          # Get disk space information
           total_disk=$(df -h / | grep / | awk '{print $2}')
-          
-          # Format the description
           description="Executed on a GitHub Actions runner with ${total_ram} RAM, ${num_cpus}CPUs, and ${total_disk} disk space."
-          
-          # Set the description as an environment variable
           echo "GATLING_RUN_DESCRIPTION=${description}" >> $GITHUB_ENV
 
       - name: Run performance tests
@@ -93,12 +99,18 @@ jobs:
         if: env.SIMULATION_PRESET == 'standard'
         run: ./mvnw exec:java -Dexec.mainClass=org.performance.parser.TrendDataParser
 
-      - name: Commit Updated Trend Data
+      - name: Commit Updated Trend Data and Gatling Report
+        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore(perf): Update performance trend data"
-          file_pattern: performance-trends/requests-trend.csv
-          branch: ${{ github.ref_name }}
+          commit_message: "docs(perf): Update performance trend data and report"
+          file_pattern: |
+            target/gatling/
+            performance-trends/requests-trend.csv
+          branch: report
+          push_options: --force
+          commit_user_name: github-actions[bot]
+          commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com
 
       - name: Stop the OpenMRS instance
         if: '!cancelled()'
@@ -111,24 +123,6 @@ jobs:
           name: report
           path: target/gatling
           retention-days: 30
-
-      # Publish the report to GH pages
-      - name: Set up Git
-        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Commit the report to the report branch
-        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        run: |
-          chmod +x commit-report.sh
-          ./commit-report.sh
-
-      - name: Push changes
-        if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        run: |
-            git push origin HEAD:report -f
 
       - name: Capture Server Logs
         if: always()
